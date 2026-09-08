@@ -24,9 +24,10 @@ def get_ocr():
                 intra_op_num_threads=2,
             )
         else:
-            # Cap intra-op threads: without this, every worker process spawns
-            # an ONNX thread-pool sized to all cores -> oversubscription stall.
-            kwargs = dict(intra_op_num_threads=2)
+            # One intra-op thread per worker: throughput comes from the
+            # process pool (sized to the cgroup quota), not ONNX threads.
+            # Without a cap, every worker spawns a pool sized to all cores.
+            kwargs = dict(intra_op_num_threads=1)
         try:
             _OCR = RapidOCR(**kwargs)
         except (TypeError, ValueError):

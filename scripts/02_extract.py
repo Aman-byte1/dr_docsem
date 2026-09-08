@@ -113,7 +113,9 @@ def main():
             print(f"[{split}] wrote {out} | docs with 0 blocks: {n_empty}")
             continue
 
-        workers = args.workers or max(2, min(24, _cpu_quota() // 4))
+        # cgroup quota ~= real core budget; OCR workers use 1 intra-op thread
+        # each (2 with CUDA), so give the pool the full quota.
+        workers = args.workers or max(2, min(16, _cpu_quota()))
         print(f"[{split}] using {workers} OCR workers", flush=True)
         t0 = time.time()
         rows = list(done.values())
