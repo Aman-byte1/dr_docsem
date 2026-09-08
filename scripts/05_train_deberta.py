@@ -12,7 +12,7 @@ def main():
     ap.add_argument("--model", default="microsoft/deberta-v3-base")
     ap.add_argument("--epochs", type=float, default=3.0)
     ap.add_argument("--batch-size", type=int, default=32)
-    ap.add_argument("--lr", type=float, default=2e-5)
+    ap.add_argument("--lr", type=float, default=8e-6)
     ap.add_argument("--max-length", type=int, default=384)
     ap.add_argument("--out", default=str(MODELS / "deberta-evidence"))
     args = ap.parse_args()
@@ -53,10 +53,18 @@ def main():
 
     model.train()
     step = 0
+    n_nan = 0
+    # bf16 autocast for speed; fp32 master weights avoid the fp16 overflow
+    # that drives DeBERTa-v3 loss to NaN on this task.
     for epoch in range(int(args.epochs)):
         for batch in loader:
             batch = {k: v.to(device) for k, v in batch.items()}
-            out = model(**batch)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=(device == "cuda")):
+                out = model(**batch)
+            if not torch.isfinite(out.loss):
+                n_nan += 1
+                opt.zero_grad()
+                continue
             out.loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), 1.0)
             opt.step()
@@ -64,7 +72,12 @@ def main():
             opt.zero_grad()
             step += 1
             if step % 50 == 0:
-                print(f"epoch {epoch} step {step}/{steps} loss {out.loss.item():.4f}", flush=True)
+                print(
+                    f"epoch {epoch} step {step}/{steps} loss {out.loss.item():.4f} nan_batches={n_nan}",
+                    flush=True,
+                )
+    if n_nan:
+        print(f"WARNING: skipped {n_nan} non-finite-loss batches")
 
     model.save_pretrained(args.out)
     tok.save_pretrained(args.out)

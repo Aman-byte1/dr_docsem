@@ -6,10 +6,25 @@ where it left off instead of starting over.
 """
 
 import argparse
+import glob
 import os
+import site
 import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
+
+# OCR_CUDA=1 needs the pip nvidia libs on the loader path BEFORE onnxruntime
+# imports; LD_LIBRARY_PATH must be set at process start, so re-exec once.
+if (
+    os.environ.get("OCR_CUDA") == "1"
+    and "nvidia" not in os.environ.get("LD_LIBRARY_PATH", "")
+):
+    _dirs = []
+    for _sp in site.getsitepackages():
+        _dirs += glob.glob(os.path.join(_sp, "nvidia", "*", "lib"))
+    if _dirs:
+        os.environ["LD_LIBRARY_PATH"] = ":".join(_dirs) + ":" + os.environ.get("LD_LIBRARY_PATH", "")
+        os.execv(sys.executable, [sys.executable] + sys.argv)
 
 
 def _cpu_quota() -> int:
@@ -62,7 +77,15 @@ def _init_worker():
     get_ocr()
 
 
-def _worker(task, dpi: int, force_ocr: bool):
+def _range_ids(blocks: dict, lo: int = 6, hi: int = 13) -> int:
+    return sum(
+        1
+        for b in blocks
+        if b.startswith("b") and b[1:].isdigit() and lo <= int(b[1:]) <= hi
+    )
+
+
+def _worker(task, dpi: int, force_ocr: bool, retry_dpi: int):
     pdf_path = RAW / task["document_pdf"]
     blocks = {}
     if not force_ocr:
@@ -71,6 +94,16 @@ def _worker(task, dpi: int, force_ocr: bool):
         from docsem.ocr import ocr_document_blocks
 
         blocks = ocr_document_blocks(pdf_path, dpi=dpi)
+        # Auto-heal: gold evidence always lives in b06..b13. If most of that
+        # range is missing, the OCR pass was bad (low dpi / missed markers) -
+        # retry the whole doc at higher dpi and keep the better extraction.
+        if retry_dpi > dpi and _range_ids(blocks) < 6:
+            try:
+                better = ocr_document_blocks(pdf_path, dpi=retry_dpi)
+                if _range_ids(better) > _range_ids(blocks):
+                    blocks = better
+            except Exception:
+                pass
     return {
         "instance_id": task["instance_id"],
         "user_query": task["user_query"],
@@ -83,7 +116,8 @@ def _worker(task, dpi: int, force_ocr: bool):
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--splits", default="train,val,test")
-    ap.add_argument("--dpi", type=int, default=220)
+    ap.add_argument("--dpi", type=int, default=300)
+    ap.add_argument("--retry-dpi", type=int, default=400)
     ap.add_argument("--force-ocr", action="store_true")
     ap.add_argument(
         "--workers",
@@ -123,7 +157,10 @@ def main():
         last_done_at = time.time()
 
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as ex:
-            fut2task = {ex.submit(_worker, t, args.dpi, args.force_ocr): t for t in todo}
+            fut2task = {
+                ex.submit(_worker, t, args.dpi, args.force_ocr, args.retry_dpi): t
+                for t in todo
+            }
             pending = set(fut2task)
             while pending:
                 finished, pending = wait(pending, timeout=30, return_when=FIRST_COMPLETED)
