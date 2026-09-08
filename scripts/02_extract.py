@@ -1,19 +1,34 @@
 """02: Extract document blocks for all splits (text layer if available, else OCR).
 
-Parallelized with a process pool (OCR is CPU-bound). Progress is checkpointed,
-so an interrupted run resumes where it left off instead of starting over.
+Parallelized with a process pool (OCR is CPU-bound). Prints a newline-based
+progress bar (log-friendly), and checkpointed so an interrupted run resumes
+where it left off instead of starting over.
 """
 
 import argparse
 import os
 import sys
 import time
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
 
 sys.path.insert(0, "src")
 from docsem.io_utils import RAW, blocks_file, read_jsonl, write_jsonl  # noqa: E402
 from docsem.blocks import parse_blocks, valid_block_ids  # noqa: E402
 from docsem.pdf_images import page_texts  # noqa: E402
+
+
+def _bar(frac: float, width: int = 30) -> str:
+    filled = int(width * max(0.0, min(1.0, frac)))
+    return "|" + "#" * filled + "." * (width - filled) + "|"
+
+
+def _fmt_eta(seconds: float) -> str:
+    seconds = int(seconds)
+    if seconds >= 3600:
+        return f"{seconds // 3600}h{(seconds % 3600) // 60:02d}m"
+    if seconds >= 60:
+        return f"{seconds // 60}m{seconds % 60:02d}s"
+    return f"{seconds}s"
 
 
 def _init_worker():
@@ -52,7 +67,7 @@ def main():
         "--workers",
         type=int,
         default=int(os.environ.get("OCR_WORKERS", "0")),
-        help="process pool size; default min(8, cpu_count), override with OCR_WORKERS",
+        help="process pool size; default max(4, cores//4), override with OCR_WORKERS",
     )
     args = ap.parse_args()
 
@@ -66,7 +81,11 @@ def main():
             for r in read_jsonl(out):
                 done[r["instance_id"]] = r
         todo = [t for t in tasks if t["instance_id"] not in done]
-        print(f"[{split}] {len(done)} already extracted, {len(todo)} to go", flush=True)
+        print(
+            f"[{split}] {_bar(1 - len(todo) / max(1, len(tasks)))} "
+            f"{len(done)}/{len(tasks)} already extracted, {len(todo)} to go",
+            flush=True,
+        )
         if not todo:
             n_empty = sum(1 for r in done.values() if r["n_blocks"] == 0)
             print(f"[{split}] wrote {out} | docs with 0 blocks: {n_empty}")
@@ -76,39 +95,59 @@ def main():
         print(f"[{split}] using {workers} OCR workers", flush=True)
         t0 = time.time()
         rows = list(done.values())
-        n_done, n_fail = 0, 0
+        n_todo, n_done, n_fail = len(todo), 0, 0
+        last_done_at = time.time()
+
         with ProcessPoolExecutor(max_workers=workers, initializer=_init_worker) as ex:
-            futures = [ex.submit(_worker, t, args.dpi, args.force_ocr) for t in todo]
-            for task, fut in zip(todo, futures):  # keep document order
-                try:
-                    rows.append(fut.result())
-                except Exception as e:  # one bad PDF must not kill the run
-                    n_fail += 1
-                    print(f"  !! failed {task['instance_id']}: {e!r}", flush=True)
-                    rows.append(
-                        {
-                            "instance_id": task["instance_id"],
-                            "user_query": task["user_query"],
-                            "document_pdf": task["document_pdf"],
-                            "n_blocks": 0,
-                            "blocks": {},
-                        }
-                    )
-                n_done += 1
-                if n_done == 1:
-                    print(f"[{split}] first doc done in {time.time() - t0:.1f}s", flush=True)
-                if n_done % 25 == 0 or n_done == len(todo):
-                    rate = n_done / (time.time() - t0)
-                    eta = (len(todo) - n_done) / rate if rate else 0.0
+            fut2task = {ex.submit(_worker, t, args.dpi, args.force_ocr): t for t in todo}
+            pending = set(fut2task)
+            while pending:
+                finished, pending = wait(pending, timeout=30, return_when=FIRST_COMPLETED)
+                if not finished:
+                    idle = time.time() - last_done_at
                     print(
-                        f"[{split}] {n_done}/{len(todo)} "
-                        f"({rate:.1f} docs/s, ETA {eta / 60:.0f} min, fails={n_fail})",
+                        f"[{split}] ... no completions in the last {idle:.0f}s "
+                        f"(workers busy or slow init; first-use model download "
+                        f"can take a minute)",
                         flush=True,
                     )
-                    write_jsonl(out, rows)  # checkpoint for resume
+                    continue
+                for fut in finished:
+                    task = fut2task[fut]
+                    try:
+                        rows.append(fut.result())
+                    except Exception as e:  # one bad PDF must not kill the run
+                        n_fail += 1
+                        print(f"  !! failed {task['instance_id']}: {e!r}", flush=True)
+                        rows.append(
+                            {
+                                "instance_id": task["instance_id"],
+                                "user_query": task["user_query"],
+                                "document_pdf": task["document_pdf"],
+                                "n_blocks": 0,
+                                "blocks": {},
+                            }
+                        )
+                    n_done += 1
+                    last_done_at = time.time()
+
+                rate = n_done / (time.time() - t0)
+                eta = (n_todo - n_done) / rate if rate else 0.0
+                print(
+                    f"[{split}] {_bar(n_done / n_todo)} "
+                    f"{n_done}/{n_todo} ({100 * n_done / n_todo:.0f}%) "
+                    f"{rate:.1f} docs/s ETA {_fmt_eta(eta)} fails={n_fail}",
+                    flush=True,
+                )
+                write_jsonl(out, rows)  # checkpoint for resume
+
         write_jsonl(out, rows)
         n_empty = sum(1 for r in rows if r["n_blocks"] == 0)
-        print(f"[{split}] wrote {out} | docs with 0 blocks: {n_empty} | failures: {n_fail}")
+        print(
+            f"[{split}] DONE {_bar(1.0)} wrote {out} | "
+            f"docs with 0 blocks: {n_empty} | failures: {n_fail}",
+            flush=True,
+        )
 
 
 if __name__ == "__main__":
