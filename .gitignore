@@ -16,3 +16,4 @@ venv/
 wandb/
 nohup.out
 *.log
+*.token
