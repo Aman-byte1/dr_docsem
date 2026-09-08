@@ -36,7 +36,11 @@ def main():
             return r["query"], r["block_text"], r["label"]
 
     tok = AutoTokenizer.from_pretrained(args.model)
-    model = AutoModelForSequenceClassification.from_pretrained(args.model, num_labels=2)
+    # SDPA attention NaNs with DeBERTa's disentangled attention (known
+    # transformers bug) - force the eager implementation.
+    model = AutoModelForSequenceClassification.from_pretrained(
+        args.model, num_labels=2, attn_implementation="eager"
+    )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
 
@@ -78,6 +82,12 @@ def main():
                 )
     if n_nan:
         print(f"WARNING: skipped {n_nan} non-finite-loss batches")
+    attempted = step + n_nan
+    if attempted and n_nan > 0.25 * attempted:
+        raise RuntimeError(
+            f"{n_nan}/{attempted} batches had non-finite loss - training is "
+            "unstable; NOT saving a garbage model. Report this run."
+        )
 
     model.save_pretrained(args.out)
     tok.save_pretrained(args.out)

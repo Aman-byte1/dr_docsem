@@ -1,6 +1,7 @@
 """Shared paths and small IO helpers."""
 
 import json
+import os
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -32,11 +33,15 @@ def read_jsonl(path):
 
 
 def write_jsonl(path, rows):
+    """Atomic write (tmp file + rename) so concurrent readers never see a
+    half-written checkpoint."""
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         for row in rows:
             f.write(json.dumps(row, ensure_ascii=False) + "\n")
+    os.replace(tmp, path)
 
 
 def read_json(path):
@@ -47,8 +52,10 @@ def read_json(path):
 def write_json(path, obj):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    with open(path, "w", encoding="utf-8") as f:
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
         json.dump(obj, f, indent=2, ensure_ascii=False)
+    os.replace(tmp, path)
 
 
 def split_manifest(split: str) -> Path:

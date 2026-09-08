@@ -74,8 +74,11 @@ def ocr_document(pdf_path, dpi: int = 220) -> str:
     return "\n".join(pages)
 
 
-def ocr_document_blocks(pdf_path, dpi: int = 220) -> dict:
-    return parse_blocks(ocr_document(pdf_path, dpi=dpi))
+def ocr_document_blocks(pdf_path, dpi: int = 300) -> dict:
+    blocks = parse_blocks(ocr_document(pdf_path, dpi=dpi))
+    from .textfix import fix_spacing
+
+    return {b: fix_spacing(t) for b, t in blocks.items()}
 
 
 def text_layer_document_blocks(pdf_path) -> dict:
