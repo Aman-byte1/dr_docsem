@@ -1,9 +1,11 @@
 """Shared pipeline runner: load blocks, pick evidence, solve, emit predictions."""
 
 import argparse
+import time
 
 from .io_utils import read_jsonl, blocks_file
 from .evidence import pick_evidence, candidate_ids
+from .progress import line
 from .solver import Solver, solve_one
 
 
@@ -24,6 +26,7 @@ def run_pipeline(
     solver = Solver(model_dir, use_vllm=use_vllm)
 
     preds = []
+    t0 = time.time()
     for i, t in enumerate(tasks):
         blocks = t["blocks"]
         ev, method = pick_evidence(query=t["user_query"], blocks=blocks, deberta_model_dir=deberta_dir)
@@ -48,8 +51,14 @@ def run_pipeline(
                 "_code": code,
             }
         )
-        if (i + 1) % 25 == 0 or (i + 1) == len(tasks):
-            print(f"[{i + 1}/{len(tasks)}] ev={ev} ({method}) ans={ans}", flush=True)
+        if (i + 1) % 5 == 0 or (i + 1) == len(tasks):
+            print(
+                line(f"[{split}]", i + 1, len(tasks), t0, extra=f"ev={ev}({method}) ans={ans}"),
+                flush=True,
+            )
+            from .io_utils import write_jsonl
+
+            write_jsonl(out_path, preds)  # checkpoint
     if out_path:
         from .io_utils import write_jsonl
 

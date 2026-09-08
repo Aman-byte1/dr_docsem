@@ -6,9 +6,11 @@ keep the traces whose final answer matches gold. Output is chat-format JSONL for
 
 import argparse
 import sys
+import time
 
 sys.path.insert(0, "src")
 from docsem.io_utils import REPORTS, read_jsonl, write_jsonl  # noqa: E402
+from docsem.progress import line  # noqa: E402
 from docsem.solver import Solver, _run_code, parse_out  # noqa: E402
 from docsem.normalize import extract_final, extract_code  # noqa: E402
 
@@ -30,6 +32,7 @@ def main():
     solver = Solver(args.solver_model, use_vllm=True)
 
     out_rows = []
+    t0 = time.time()
     for i, r in enumerate(rows):
         outs = solver.chat(
             r["user"],
@@ -64,8 +67,12 @@ def main():
             )
             kept += 1
             break  # one correct trace per example is enough
-        if (i + 1) % 50 == 0 or (i + 1) == len(rows):
-            print(f"[{i + 1}/{len(rows)}] kept so far: {len(out_rows)}", flush=True)
+        if (i + 1) % 10 == 0 or (i + 1) == len(rows):
+            print(
+                line("[traces]", i + 1, len(rows), t0, extra=f"kept={len(out_rows)}"),
+                flush=True,
+            )
+            write_jsonl(args.out, out_rows)  # checkpoint
 
     write_jsonl(args.out, out_rows)
     print(f"wrote {args.out}: {len(out_rows)} traces (coverage {len(out_rows)}/{len(rows)})")

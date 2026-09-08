@@ -63,6 +63,30 @@ def main():
         processing_class=tok,
         peft_config=peft_config,
     )
+
+    # log-friendly progress (HF's default tqdm spams the log with \r lines)
+    total_steps = int(trainer.state.max_steps or 0)
+
+    from transformers import TrainerCallback
+
+    class BarCallback(TrainerCallback):
+        def on_log(self, targs, tstate, tcontrol, logs=None, **kw):
+            step = tstate.global_step
+            frac = step / total_steps if total_steps else 1.0
+            loss = logs.get("loss")
+            extra = f"loss={loss:.4f}" if isinstance(loss, (int, float)) else ""
+            import time as _t
+
+            eta = (total_steps - step) * logs.get("train_steps_per_second", 0)
+            from docsem.progress import bar, fmt_eta
+
+            print(
+                f"[sft] {bar(frac)} {step}/{total_steps} {extra}"
+                + (f" ETA {fmt_eta((total_steps - step) / logs['train_steps_per_second'])}" if logs.get("train_steps_per_second") else ""),
+                flush=True,
+            )
+
+    trainer.add_callback(BarCallback())
     trainer.train()
     # save the LoRA adapter
     trainer.save_model(args.out)
