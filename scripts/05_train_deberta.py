@@ -58,13 +58,13 @@ def main():
     model.train()
     step = 0
     n_nan = 0
-    # bf16 autocast for speed; fp32 master weights avoid the fp16 overflow
-    # that drives DeBERTa-v3 loss to NaN on this task.
+    # NO autocast: DeBERTa-v3's disentangled relative position encoding
+    # produces NaN under bf16/fp16 autocast on most GPUs (known issue).
+    # fp32 training is ~15 min on A40 — stable and fast enough.
     for epoch in range(int(args.epochs)):
         for batch in loader:
             batch = {k: v.to(device) for k, v in batch.items()}
-            with torch.autocast(device_type="cuda", dtype=torch.bfloat16, enabled=(device == "cuda")):
-                out = model(**batch)
+            out = model(**batch)
             if not torch.isfinite(out.loss):
                 n_nan += 1
                 opt.zero_grad()
@@ -82,6 +82,11 @@ def main():
                 )
     if n_nan:
         print(f"WARNING: skipped {n_nan} non-finite-loss batches")
+    if step == 0:
+        raise RuntimeError(
+            "ALL batches had non-finite loss — nothing was learned. "
+            "NOT saving a garbage model."
+        )
     attempted = step + n_nan
     if attempted and n_nan > 0.25 * attempted:
         raise RuntimeError(
