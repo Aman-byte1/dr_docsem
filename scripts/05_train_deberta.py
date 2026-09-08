@@ -42,7 +42,7 @@ def main():
     # in fp16, so we force fp32 weights explicitly.
     model = AutoModelForSequenceClassification.from_pretrained(
         args.model, num_labels=2, attn_implementation="eager",
-        torch_dtype=torch.float32,
+        dtype=torch.float32,
     )
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.to(device)
