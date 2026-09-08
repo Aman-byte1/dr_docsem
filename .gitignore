@@ -1,0 +1,18 @@
+# datasets and artifacts stay local, never committed
+data/
+models/
+outputs/
+reports/
+
+# python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.ipynb_checkpoints/
+
+# secrets and tooling
+.env
+wandb/
+nohup.out
+*.log

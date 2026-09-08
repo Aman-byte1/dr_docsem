@@ -1,0 +1,6 @@
+# Optional but strongly recommended on the A40 pod: 5-20x faster generation.
+# Install AFTER requirements.txt:
+#   pip install -r requirements-vllm.txt
+# If it conflicts with your torch/CUDA image, skip it - the pipeline
+# auto-detects vLLM and falls back to transformers otherwise.
+vllm>=0.8.5
