@@ -11,7 +11,7 @@ from docsem.prompts import SYSTEM_PROMPT, build_user_prompt  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct")
+    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct-2507")
     ap.add_argument("--out", default=str(REPORTS / "sft_traces.jsonl"))
     args = ap.parse_args()
 

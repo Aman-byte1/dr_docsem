@@ -9,7 +9,7 @@ from docsem.io_utils import MODELS, REPORTS, read_jsonl  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct")
+    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct-2507")
     ap.add_argument("--data", default=str(REPORTS / "sft_dataset.jsonl"))
     ap.add_argument("--epochs", type=float, default=2.0)
     ap.add_argument("--lr", type=float, default=1e-4)

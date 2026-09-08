@@ -15,7 +15,7 @@ from docsem.normalize import extract_final, extract_code  # noqa: E402
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct")
+    ap.add_argument("--solver-model", default="Qwen/Qwen3-4B-Instruct-2507")
     ap.add_argument("--n-samples", type=int, default=4)
     ap.add_argument("--temperature", type=float, default=0.8)
     ap.add_argument("--max-new-tokens", type=int, default=768)
