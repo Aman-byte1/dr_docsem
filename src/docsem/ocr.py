@@ -1,5 +1,7 @@
 """OCR engines: RapidOCR (light, default) and optional VLM transcription."""
 
+import os
+
 import numpy as np
 
 from .blocks import parse_blocks
@@ -13,12 +15,21 @@ def get_ocr():
     if _OCR is None:
         from rapidocr_onnxruntime import RapidOCR
 
-        try:
+        if os.environ.get("OCR_CUDA", "0") == "1":
+            # GPU execution (requires onnxruntime-gpu instead of onnxruntime).
+            kwargs = dict(
+                det_use_cuda=True,
+                cls_use_cuda=True,
+                rec_use_cuda=True,
+                intra_op_num_threads=2,
+            )
+        else:
             # Cap intra-op threads: without this, every worker process spawns
-            # an ONNX thread-pool sized to all cores (e.g. 8 workers x 96
-            # threads = 768 threads on 96 cores -> oversubscription stall).
-            _OCR = RapidOCR(intra_op_num_threads=4)
-        except TypeError:
+            # an ONNX thread-pool sized to all cores -> oversubscription stall.
+            kwargs = dict(intra_op_num_threads=2)
+        try:
+            _OCR = RapidOCR(**kwargs)
+        except (TypeError, ValueError):
             _OCR = RapidOCR()
     return _OCR
 

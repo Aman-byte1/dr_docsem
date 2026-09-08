@@ -11,6 +11,28 @@ import sys
 import time
 from concurrent.futures import ProcessPoolExecutor, FIRST_COMPLETED, wait
 
+
+def _cpu_quota() -> int:
+    """Effective CPU count in containers (cgroup quota wins over nproc)."""
+    try:
+        with open("/sys/fs/cgroup/cpu.max") as f:
+            quota, period = f.read().split()
+            if quota != "max":
+                return max(1, int(int(quota) / int(period)))
+    except OSError:
+        pass
+    try:
+        with open("/sys/fs/cgroup/cpu/cpu.cfs_quota_us") as f:
+            quota = int(f.read().strip())
+            with open("/sys/fs/cgroup/cpu/cpu.cfs_period_us") as f:
+                period = int(f.read().strip())
+            if quota > 0:
+                return max(1, quota // period)
+    except OSError:
+        pass
+    return os.cpu_count() or 8
+
+
 sys.path.insert(0, "src")
 from docsem.io_utils import RAW, blocks_file, read_jsonl, write_jsonl  # noqa: E402
 from docsem.blocks import parse_blocks, valid_block_ids  # noqa: E402
@@ -91,7 +113,7 @@ def main():
             print(f"[{split}] wrote {out} | docs with 0 blocks: {n_empty}")
             continue
 
-        workers = args.workers or max(4, min(24, (os.cpu_count() or 8) // 4))
+        workers = args.workers or max(2, min(24, _cpu_quota() // 4))
         print(f"[{split}] using {workers} OCR workers", flush=True)
         t0 = time.time()
         rows = list(done.values())
