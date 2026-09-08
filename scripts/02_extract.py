@@ -72,7 +72,7 @@ def main():
             print(f"[{split}] wrote {out} | docs with 0 blocks: {n_empty}")
             continue
 
-        workers = args.workers or min(8, os.cpu_count() or 4)
+        workers = args.workers or max(4, min(24, (os.cpu_count() or 8) // 4))
         print(f"[{split}] using {workers} OCR workers", flush=True)
         t0 = time.time()
         rows = list(done.values())
@@ -95,7 +95,9 @@ def main():
                         }
                     )
                 n_done += 1
-                if n_done % 50 == 0 or n_done == len(todo):
+                if n_done == 1:
+                    print(f"[{split}] first doc done in {time.time() - t0:.1f}s", flush=True)
+                if n_done % 25 == 0 or n_done == len(todo):
                     rate = n_done / (time.time() - t0)
                     eta = (len(todo) - n_done) / rate if rate else 0.0
                     print(

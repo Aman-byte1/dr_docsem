@@ -13,7 +13,13 @@ def get_ocr():
     if _OCR is None:
         from rapidocr_onnxruntime import RapidOCR
 
-        _OCR = RapidOCR()
+        try:
+            # Cap intra-op threads: without this, every worker process spawns
+            # an ONNX thread-pool sized to all cores (e.g. 8 workers x 96
+            # threads = 768 threads on 96 cores -> oversubscription stall).
+            _OCR = RapidOCR(intra_op_num_threads=4)
+        except TypeError:
+            _OCR = RapidOCR()
     return _OCR
 
 
