@@ -12,6 +12,7 @@ cd dr_docsem
 # (optional but recommended) export your HF token for faster downloads
 export HF_TOKEN=hf_xxx
 
+pip install -e .                      # makes `python -m docsem.pipeline` work
 pip install -r requirements.txt
 pip install -r requirements-vllm.txt   # optional, much faster generation
 ```
@@ -90,8 +91,15 @@ the GRPO-polished model or a fixed normalizer.
 
 ## Troubleshooting
 
-- vLLM install fails: everything falls back to transformers automatically
-  (slower but functional). Use `--no-vllm` to force it.
+- `python -m docsem.pipeline` says `No module named 'docsem'`: run
+  `pip install -e .` from the repo root (step 0 above).
+- vLLM install fails or TRL warns about vLLM versions: everything falls
+  back to transformers automatically (slower but functional). Use
+  `--no-vllm` to force it. GRPO auto-detects unsupported vLLM and uses
+  torch rollouts; if you prefer, `pip uninstall -y vllm` before step 10.
+- Download dies mid-way (`FileExistsError` / connection reset): just rerun
+  `python scripts/00_download.py` - it resumes and retries up to 3 times.
+  Lower parallelism with `HF_DOWNLOAD_WORKERS=2` on flaky networks.
 - OCR misreads a block id: `src/docsem/blocks.py` normalizes common
   confusions (`O`->`0`, `l`->`1`) and accepts single-digit ids.
 - DeBERTa training OOM: lower `--batch-size` to 16.

@@ -1,6 +1,9 @@
-# Optional but strongly recommended on the A40 pod: 5-20x faster generation.
+# vLLM for fast generation (5-20x faster than transformers).
+# NOTE: TRL 0.17 supports vLLM 0.19.0-0.27.1 only. vLLM 0.28+ breaks the
+# GRPO weight-transfer import (NCCLTrainerSendWeightsArgs), so pin the range.
 # Install AFTER requirements.txt:
 #   pip install -r requirements-vllm.txt
-# If it conflicts with your torch/CUDA image, skip it - the pipeline
-# auto-detects vLLM and falls back to transformers otherwise.
-vllm>=0.8.5
+# If pip wants to downgrade your torch (CUDA conflict), or vLLM still
+# misbehaves, `pip uninstall -y vllm` - generation then falls back to
+# transformers and GRPO falls back to torch rollouts (slower but works).
+vllm>=0.19.0,<0.28.0

@@ -24,13 +24,28 @@ def main():
     ap.add_argument("--batch-size", type=int, default=8)
     ap.add_argument("--num-gen", type=int, default=8)
     ap.add_argument("--max-completion", type=int, default=768)
-    ap.add_argument("--out", default=str(MODELS / "solver-grpo-merged"))
+    ap.add_argument("--out", default=str(MODELS / "solver-grpo"))
     args = ap.parse_args()
 
     import torch
     from datasets import Dataset
     from peft import LoraConfig
     from trl import GRPOConfig, GRPOTrainer
+
+    # TRL 0.17 supports vLLM 0.19.0-0.27.1 only; newer vLLM breaks the
+    # GRPO weight-transfer import, older lacks the API. Fall back to torch
+    # rollouts when vLLM is missing or unsupported.
+    use_vllm = True
+    try:
+        import vllm
+
+        ver = tuple(int(x) for x in vllm.__version__.split(".")[:2])
+        if not (0, 19) <= ver < (0, 28):
+            print(f"vLLM {vllm.__version__} unsupported by this TRL; using torch rollouts")
+            use_vllm = False
+    except ImportError:
+        print("vLLM not installed; using torch rollouts (slower)")
+        use_vllm = False
 
     tasks = read_jsonl(blocks_file("train"))
     labels = {l["instance_id"]: l for l in read_jsonl(labels_file())}
@@ -83,7 +98,7 @@ def main():
         target_modules=["q_proj", "k_proj", "v_proj", "o_proj", "gate_proj", "up_proj", "down_proj"],
     )
 
-    cfg = GRPOConfig(
+    cfg_kwargs = dict(
         output_dir=args.out,
         num_train_epochs=args.epochs,
         per_device_train_batch_size=args.batch_size,
@@ -96,10 +111,14 @@ def main():
         max_completion_length=args.max_completion,
         num_generations=args.num_gen,
         temperature=0.9,
-        use_vllm=True,
-        vllm_gpu_memory_utilization=0.25,
         report_to=[],
     )
+    if use_vllm:
+        cfg_kwargs["use_vllm"] = True
+        cfg_kwargs["vllm_gpu_memory_utilization"] = 0.25
+    else:
+        cfg_kwargs["use_vllm"] = False
+    cfg = GRPOConfig(**cfg_kwargs)
 
     trainer = GRPOTrainer(
         model=args.base_model,
@@ -109,13 +128,14 @@ def main():
         peft_config=peft_config,
     )
     trainer.train()
-    # GRPOTrainer saves the LoRA adapter only; merge it for direct inference
+    # GRPO trainer saves the LoRA adapter only; merge it for direct inference
+    if not str(args.out).endswith("-merged"):
+        args.out = str(args.out) + "-merged"
     trainer.save_model(args.out)
     print("adapter saved ->", args.out)
-    merged_out = args.out.rstrip("/") + "-merged"
     merged = trainer.model.merge_and_unload()
-    merged.save_pretrained(merged_out)
-    print("merged model saved ->", merged_out)
+    merged.save_pretrained(args.out)
+    print("merged model saved ->", args.out)
 
 
 if __name__ == "__main__":
