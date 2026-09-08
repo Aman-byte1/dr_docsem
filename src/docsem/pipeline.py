@@ -1,4 +1,4 @@
-"""Shared pipeline runner: load blocks, pick evidence, solve, emit predictions."""
+"""Shared pipeline runner: solver sees ALL blocks, picks evidence + answer."""
 
 import argparse
 import time
@@ -29,23 +29,34 @@ def run_pipeline(
     t0 = time.time()
     for i, t in enumerate(tasks):
         blocks = t["blocks"]
-        ev, method = pick_evidence(query=t["user_query"], blocks=blocks, deberta_model_dir=deberta_dir)
+        # Solver sees ALL blocks — picks evidence + answer together
+        ans, code, solver_ev = solve_one(
+            solver,
+            t["user_query"],
+            blocks,
+            n_samples=n_samples,
+            temperature=temperature,
+        )
+        # Evidence: prefer solver's pick, fall back to DeBERTa/BM25
+        if solver_ev:
+            ev, method = solver_ev, "solver"
+        else:
+            ev, method = pick_evidence(
+                query=t["user_query"], blocks=blocks,
+                deberta_model_dir=deberta_dir,
+            )
         if ev is None:
             pool = candidate_ids(blocks)
             ev = pool[0] if pool else (sorted(blocks)[0] if blocks else "b01")
             method = method + "+fallback"
-        ans, code = solve_one(
-            solver,
-            t["user_query"],
-            blocks,
-            ev,
-            n_samples=n_samples,
-            temperature=temperature,
-        )
+        # Never submit null answers (competition counts them wrong)
+        if ans is None:
+            ans = "0"
+            method = method + "+null_default"
         preds.append(
             {
                 "instance_id": t["instance_id"],
-                "answer": str(ans) if ans is not None else None,
+                "answer": str(ans),
                 "evidence": [ev],
                 "_method": method,
                 "_code": code,
@@ -70,7 +81,7 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--split", default="val", choices=["train", "val", "test"])
     ap.add_argument("--model", required=True)
-    ap.add_argument("--deberta", default=None)
+    ap.add_argument("--deberta", default=None, help="optional fallback evidence model")
     ap.add_argument("--n", type=int, default=8)
     ap.add_argument("--temperature", type=float, default=0.7)
     ap.add_argument("--no-vllm", action="store_true")
@@ -93,3 +104,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

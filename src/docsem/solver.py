@@ -124,17 +124,20 @@ def solve_one(
     solver: Solver,
     query: str,
     blocks: dict,
-    evidence_id: str,
     n_samples: int = 1,
     temperature: float = 0.7,
     max_new_tokens: int = 768,
 ):
-    """Build a prompt focused on the chosen evidence block, generate, execute, vote."""
-    focused = {evidence_id: blocks[evidence_id]} if evidence_id in blocks else blocks
-    user_prompt = build_user_prompt(query, focused)
+    """Send ALL blocks to the solver, let it pick evidence + compute answer.
+
+    Returns (answer, code, evidence_id) — evidence_id is majority-voted from
+    the solver's EVIDENCE: lines across n_samples completions.
+    """
+    user_prompt = build_user_prompt(query, blocks)
     outs = solver.chat(user_prompt, temperature, max_new_tokens, n=n_samples)
 
-    votes, codes = {}, {}
+    votes, codes, ev_votes = {}, {}, {}
+    valid_ids = set(blocks.keys())
     for text in outs:
         final = extract_final(text)
         if final is None:
@@ -148,16 +151,24 @@ def solve_one(
             continue
         votes[num] = votes.get(num, 0) + 1
         codes[num] = code
+        # Extract evidence from solver output (majority vote)
+        ev = extract_evidence_id(text, valid_ids=valid_ids)
+        if ev:
+            ev_votes[ev] = ev_votes.get(ev, 0) + 1
     if not votes:
         # fallback: last number seen in any output
         for text in outs:
             num = last_number(text)
             if num is not None:
                 votes[num] = votes.get(num, 0) + 1
+            ev = extract_evidence_id(text, valid_ids=valid_ids)
+            if ev:
+                ev_votes[ev] = ev_votes.get(ev, 0) + 1
+    best_ev = max(ev_votes.items(), key=lambda kv: kv[1])[0] if ev_votes else None
     if not votes:
-        return None, None
+        return None, None, best_ev
     best = max(votes.items(), key=lambda kv: kv[1])[0]
-    return best, codes.get(best)
+    return best, codes.get(best), best_ev
 
 
 def parse_out(value):
@@ -165,3 +176,4 @@ def parse_out(value):
 
     n = parse_number(value)
     return n
+
